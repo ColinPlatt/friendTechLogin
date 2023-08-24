@@ -28,17 +28,66 @@ let hexGenerator = {
 };
 
 
-function sendMessage(wssSocket, chatRoomId, text, imagePaths = null) {
+function sendMessage(wssSocket, chatRoomId, text, imagePaths) {
     const messageData = {
         action: "sendMessage",
         text: text,
         imagePaths: imagePaths,
-        chatRoomId: WALLET_ADDRESS.toLowerCase(),
+        chatRoomId: chatRoomId.toLowerCase(),
         clientMessageId: hexGenerator.generate()
     };
 
+    console.log('Sending message:', JSON.stringify(messageData, null, 2));
+
     wssSocket.send(JSON.stringify(messageData));
+
+    wssSocket.on('message', (data) => {
+        console.log('Received from server:', data.toString('utf8'));
+    });
+
+    wssSocket.on('error', (error) => {
+        console.error('WebSocket error:', error);
+    });
+
+    wssSocket.on('close', (code, reason) => {
+        console.log(`WebSocket closed. Code: ${code}, Reason: ${reason}`);
+    });
 }
+
+// images not working yet, but this is the code to fetch an image and convert it to base64
+async function fetchImageAsBase64(url) {
+    try {
+        const response = await axios.get(url, {
+            responseType: 'arraybuffer' // ensures the data is returned as a Buffer
+        });
+        const base64 = Buffer.from(response.data, 'binary').toString('base64');
+        return base64;
+    } catch (error) {
+        console.error('Failed to fetch image:', error);
+        return null;
+    }
+}
+
+async function sendMessageWithImageUrl(wssSocket, chatRoomId, text, imageUrl) {
+    const imageBase64 = await fetchImageAsBase64(imageUrl);
+
+    // console.log('Image base64:', imageBase64);
+
+    if (imageBase64) {
+        const messageData = {
+            action: "sendMessage",
+            text: text,
+            imagePaths: imageBase64,
+            chatRoomId: chatRoomId.toLowerCase(),
+            clientMessageId: hexGenerator.generate()
+        };
+
+        wssSocket.send(JSON.stringify(messageData));
+    } else {
+        console.error('Failed to send image data.');
+    }
+}
+
 
 function startWebSocketConnection(jwt) {
     const url = `wss://prod-api.kosetto.com/?authorization=${jwt}`;
@@ -55,9 +104,11 @@ function startWebSocketConnection(jwt) {
 
         socket.send(JSON.stringify(requestData));
 
-        sendMessage(socket, WALLET_ADDRESS, `\"testing sending more complex messages via the API. It is now ${
+        sendMessage(socket, WALLET_ADDRESS, `\"testing a text message via the API. It is now ${
             new Date().toISOString()
         }\\n\"`);
+
+        // sendMessageWithImageUrl(socket, WALLET_ADDRESS, 'testing an image message via the API', 'https://fastly.picsum.photos/id/390/200/300.jpg?hmac=m2OBPNcWKpibmpjeOD_5Bnl5rx-6WjYtzfGnleMgyhU');
     });
 
     socket.on('message', (data) => {
