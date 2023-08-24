@@ -1,5 +1,6 @@
 require('dotenv').config();
 const axios = require('axios');
+const WebSocket = require('ws');
 const ethUtil = require('ethereumjs-util');
 const {ethers} = require('ethers');
 
@@ -7,10 +8,74 @@ const PRIVY_APP_ID = process.env.PRIVY_APP_ID || 'cll35818200cek208tedmjvqp';
 const WALLET_ADDRESS = process.env.WALLET_ADDRESS;
 const PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY;
 
-async function main() {
-    // Initialize web3
+let hexGenerator = {
+    index: 0,
+    hexArray: Array.from(
+        {
+            length: 256
+        },
+        (_, i) => (i + 256).toString(16).substring(1)
+    ),
+    generate: function (len = 11) {
+        if (!this.randomHexString || this.index + len > 512) {
+            this.randomHexString = Array.from({
+                length: 256
+            }, () => this.hexArray[256 * Math.random() | 0]).join('');
+            this.index = 0;
+        }
+        return this.randomHexString.substring(this.index, this.index ++ + len);
+    }
+};
 
-    // Create a Wallet instance
+
+function sendMessage(wssSocket, chatRoomId, text, imagePaths = null) {
+    const messageData = {
+        action: "sendMessage",
+        text: text,
+        imagePaths: imagePaths,
+        chatRoomId: WALLET_ADDRESS.toLowerCase(),
+        clientMessageId: hexGenerator.generate()
+    };
+
+    wssSocket.send(JSON.stringify(messageData));
+}
+
+function startWebSocketConnection(jwt) {
+    const url = `wss://prod-api.kosetto.com/?authorization=${jwt}`;
+    const socket = new WebSocket(url);
+
+    socket.on('open', () => {
+        console.log('Connected to:', url);
+
+        const requestData = {
+            action: 'requestMessages',
+            chatRoomId: WALLET_ADDRESS,
+            pageStart: null
+        };
+
+        socket.send(JSON.stringify(requestData));
+
+        sendMessage(socket, WALLET_ADDRESS, `\"testing sending more complex messages via the API. It is now ${
+            new Date().toISOString()
+        }\\n\"`);
+    });
+
+    socket.on('message', (data) => {
+        const strData = data.toString('utf8');
+        console.log('Received:', strData);
+    });
+
+    socket.on('error', (error) => {
+        console.error('WebSocket Error:', error);
+    });
+
+    socket.on('close', (code, reason) => {
+        console.log(`Connection closed with code ${code} and reason "${reason}"`);
+    });
+}
+
+
+async function main() {
     const wallet = new ethers.Wallet(PRIVATE_KEY);
 
     const initResponse = await axios.post('https://auth.privy.io/api/v1/siwe/init', {
@@ -35,7 +100,7 @@ async function main() {
     const o = WALLET_ADDRESS;
     const l = 'By signing, you are proving you own this wallet and logging in. This does not initiate a transaction or cost any fees.';
     const n = 'http://localhost:3000';
-    const t = '1';
+    const t = '8453';
     const a = nonce;
     const i = issuanceTime;
 
@@ -78,12 +143,14 @@ Resources:
     };
 
     const payload = {
-        chainId: 'eip155:1',
+        chainId: 'eip155:8453',
         connectorType: 'injected',
         message,
         signature: signature,
         walletClientType: 'metamask'
     }
+
+    const FT_BASE_URL = 'https://prod-api.kosetto.com';
 
     await axios.post('https://auth.privy.io/api/v1/siwe/authenticate', payload, {headers: headers}).then(response => {
 
@@ -104,8 +171,17 @@ Resources:
             address: data.user.linked_accounts[0].address
         }
 
-        axios.post('https://prod-api.kosetto.com/signature', sig_payload, {headers: sig_headers}).then(response => {
+        axios.post(FT_BASE_URL + '/signature', sig_payload, {headers: sig_headers}).then(response => {
             console.log('Signature Verification:', response.data)
+
+            const jwt = response.data.token;
+
+            console.log('JWT:', jwt);
+
+            // should add Websocket connecttion here and fetch all messages in my chat
+            startWebSocketConnection(jwt);
+
+
         }).catch(error => {
             if (error.response) {
                 // The request was made and the server responded with a status code
